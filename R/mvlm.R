@@ -1,7 +1,7 @@
 #' Conduct multivariate multiple regression and MANOVA with analytic p-values
 #'
 #' \code{mvlm} is used to fit linear models with a multivariate outcome. It uses
-#' the asymptotic  null distribution of the multivariate linear model test
+#' the asymptotic null distribution of the multivariate linear model test
 #' statistic to compute p-values (McArtor et al., under review). It therefore
 #' alleviates the need to use approximate p-values based Wilks' Lambda, Pillai's
 #' Trace, the Hotelling-Lawley Trace, and Roy's Greatest Root.
@@ -28,12 +28,12 @@
 #' of predictors included in the formula.
 #' @param data Mandatory \code{data.frame} containing all of the predictors
 #' passed to \code{formula}.
+#' @param n.cores Number of cores to use in parallelization through the
+#' \code{parallel} pacakge.
 #' @param start.acc Starting accuracy of the Davies (1980) algorithm
 #' implemented in the \code{\link{davies}} function in the \code{CompQuadForm}
 #' package (Duchesne &  De Micheaux, 2010) that \code{mvlm} uses to compute
 #' multivariate linear model p-values.
-#' @param n.cores Number of cores to use in parallelization through the
-#' \code{parallel} pacakge.
 #' @param contr.factor The type of contrasts used to test unordered categorical
 #' variables that have type \code{factor}. Must be a string taking one of the
 #' following values: \code{("contr.sum", "contr.treatment", "contr.helmert")}.
@@ -86,9 +86,9 @@
 #'  approximation and exact methods. Computational Statistics and Data
 #'  Analysis, 54(4), 858-862.
 #'
-#'  McArtor, D. B., Lubke, G. H., & Bergeman, C. S. (under review). The null
-#'  distribution of the multivariate linear model test statistic. Manuscript
-#'  submitted for publication.
+#'  McArtor, D. B., Grasman, R. P. P. P., Lubke, G. H., & Bergeman, C. S.
+#'  (under review). A new approach to conducting linear model hypothesis tests
+#'  with a multivariate outcome.
 #'
 #' @examples
 #'data(mvlmdata)
@@ -107,7 +107,8 @@
 #' @importFrom parallel mclapply
 #' @export
 mvlm <- function(formula, data,
-                 start.acc = 1e-20,  n.cores = 1,
+                 n.cores = 1,
+                 start.acc = 1e-20,
                  contr.factor = 'contr.sum',
                  contr.ordered = 'contr.poly'){
 
@@ -344,7 +345,7 @@ mvlm <- function(formula, data,
   # ============================================================================
 
   beta.hat <- as.matrix(stats::coef(stats::lm(formula, data = X,
-                                contrasts = contr.list)))
+                                              contrasts = contr.list)))
   colnames(beta.hat) <- ynames
 
   stat <- c(f.omni, f.x)
@@ -465,9 +466,9 @@ print.mvlm <- function(x, ...){
 #'  approximation and exact methods. Computational Statistics and Data
 #'  Analysis, 54(4), 858-862.
 #'
-#'  McArtor, D. B., Lubke, G. H., & Bergeman, C. S. (under review). The null
-#'  distribution of the multivariate linear model test statistic. Manuscript
-#'  submitted for publication.
+#'  McArtor, D. B., Grasman, R. P. P. P., Lubke, G. H., & Bergeman, C. S.
+#'  (under review). A new approach to conducting linear model hypothesis tests
+#'  with a multivariate outcome.
 #'
 #' @examples
 #'data(mvlmdata)
@@ -485,33 +486,51 @@ print.mvlm <- function(x, ...){
 #' @export
 summary.mvlm <- function(object, ...){
   pp <- unlist(object$pv)
-  pv.print <- rep(NA, length(pp))
-  for(i in 1:length(pv.print)){
-    pv.print[i] <- format.pval(pp[i], eps = object$p.prec[i,1])
-  }
 
   pr2.out <- c(object$pseudo.rsq[1], NA, object$pseudo.rsq[-1])
-  print.res <- data.frame('Statistic' =
-                            format(object$stat, digits = 3),
-                          'Numer DF' = object$df,
-                          'Pseudo R2' = format.pval(pr2.out, digits = 3),
-                          'p-value' = pv.print)
-  out.res <- data.frame('Statistic' = object$stat,
-                        'Numer DF' = object$df,
-                        'Pseudo R2' = pr2.out,
-                        'p-value' = object$pv)
-  names(print.res) <- names(out.res) <- c('Statistic', 'Numer DF',
-                                          'Pseudo R2', 'p-value')
+  out.res <- list('statistic' = object$stat,
+                  'numerDF' = object$df,
+                  'pseudoR2' = pr2.out,
+                  'pvalues' = object$pv,
+                  'p.prec' = object$p.prec)
+  class(out.res) <- 'summary.mvlm'
+  return(out.res)
+}
 
-  # Clear effect size estimate for intercept
-  print.res <- data.frame(print.res, NA)
-  print.res <- as.data.frame(print.res)
-  for(k in 1:5){
-    print.res[,k] <- paste(print.res[,k])
+#' @export
+print.summary.mvlm <- function(x, ...){
+
+  print.res <- data.frame('Statistic' = x$statistic,
+                          'Numer DF' = x$numerDF,
+                          'Pseudo R-Square' = x$pseudoR2,
+                          'p-value' = x$pvalues)
+
+  # Format p-values for printing
+  pp <- x$pvalues
+  pv.print <- rep(NA, length(pp))
+  for(i in 1:length(pv.print)){
+    pv.print[i] <- format.pval(pp[i], eps = x$p.prec[i,1])
   }
+  print.res[,4] <- pv.print
+
+  # Format significant digits on R-Square and test statistic
+  print.res[,1] <- format(print.res[,1],
+                          trim = T,
+                          digits = 4,
+                          justify = 'right',
+                          width = 10)
+
+  print.res[,3] <- format(print.res[,3],
+                          trim = T,
+                          digits = 4,
+                          justify = 'right',
+                          width = 10)
+
+  # Clear effect size from intercept
   print.res[2,3] <- ''
 
   # Add significance codes to p-values
+  print.res <- data.frame(print.res, NA)
   names(print.res)[5] <- ''
   for(l in 1:nrow(print.res)){
     if(pp[l] > 0.1){
@@ -534,7 +553,7 @@ summary.mvlm <- function(object, ...){
   print(print.res)
   cat('---', fill = T)
   cat("Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1")
-  invisible(out.res)
+
 }
 
 #' Extract mvlm Fitted Values
